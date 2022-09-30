@@ -100,7 +100,10 @@ Windows BoF:
    - The first badchar in the list should be the null byte (\x00) (must include it)    
    - Generate a new bytearray in mona, specifying these new badchars along with \x00. Then update the payload variable in your exploit.py script and remove the new badchars as well.
    - Restart oscp.exe in Immunity and run the modified exploit.py script again. Repeat the badchar comparison until the results status returns "Unmodified". This indicates that no more badchars exist.
-
+    - Accurate notes
+    - After sending bad chars the first time, run the comparison and change the ESP everytime accordingally. 
+    - remove one bad char at a time from your script
+    - keep the same bit array until the final test where you remove all the bad char
 14 - Find Jump Point 
    - With the oscp.exe either running or in a crashed state, run the following mona command, making sure to update the -cpb option with all the badchars you identified (including \x00):
    - !mona jmp -r esp -cpb "\x00 and the rest of the bad char"
